@@ -9,10 +9,11 @@ import mimetypes
 import tempfile
 import sys
 from datetime import date
+from langs import LANGS
+from util import encode_fn
 from dlx import DB
 from dlx.file.s3 import S3
 from dlx.file import File, Identifier, FileExists, FileExistsIdentifierConflict, FileExistsLanguageConflict
-from dlx.util import ISO6391
 
 s3_client = boto3.client('s3')
 ssm_client = boto3.client('ssm')
@@ -25,52 +26,34 @@ creds = json.loads(ssm_client.get_parameter(Name='default-aws-credentials')['Par
 
 # Connects to the undl files bucket
 S3.connect(
-    creds['aws_access_key_id'], creds['aws_secret_access_key'], creds['bucket']
+    access_key_id=creds['aws_access_key_id'], access_key=creds['aws_secret_access_key'], bucket=creds['bucket']
 )
 
 bucket='digitization'
 base_path = 'dgacm_bak'
-
-def encode_fn(symbols, language, extension):
-    ISO6391.codes[language.lower()]
-    symbols = [symbols] if isinstance(symbols, str) else symbols
-    xsymbols = [sym.translate(str.maketrans(' /[]*:;', '__^^!#%')) for sym in symbols]
-
-    return '{}-{}.{}'.format('&'.join(xsymbols), language.upper(), extension)
-
-LANGS = {
-    'A': 'AR',
-    'C': 'ZH',
-    'E': 'EN',
-    'F': 'FR',
-    'G': 'DE',
-    'R': 'RU',
-    'S': 'ES'
-}
 
 parser = argparse.ArgumentParser(description='Run a dlx.files import process ad-hoc for items in a CSV file.')
 parser.add_argument('--filename', metavar='filename', type=str)
 parser.add_argument('--bucket', metavar='bucket', type=str)
 parser.add_argument('--table', metavar='table', type=str)
 parser.add_argument('--index', metavar='index', type=str)
+parser.add_argument('--skipdb', action='store_true')
 
 args = parser.parse_args()
 right_now = str(date.today())
 sys.stdout = open('logs/event-{}.log'.format(right_now), 'a+', buffering=1)
-
-table = dynamodb.Table(args.table)
 
 tmpdir = tempfile.mkdtemp()
 
 with open(args.filename) as csvfile:
     this_reader = csv.reader(csvfile,delimiter='\t')
     for row in this_reader:
+        print(row)
         filename = row[0]
         subfolder = row[1]
         symbol = row[2]
         lang = LANGS['E']
-        print(f"Processing symbol {symbol}")
-        if "," in row[3]:
+        if "," in row[2]:
             lang = []
             langs = row[3].split(',')
             for l in langs:
@@ -79,39 +62,47 @@ with open(args.filename) as csvfile:
             try:
                 lang = [LANGS[row[3]]]
             except KeyError:
-                print(f"Unable to determine language for {symbol}. Defaulting to English.")
-                lang = LANGS['E']
+                print(f"LanguageError: Unable to determine language for {filename} and {symbol}. This file won't be imported.")
+                break
 
         ext = filename.split('.')[-1]
         encoded_filename = encode_fn(symbol, lang, ext)
         identifiers = []
         identifiers.append(Identifier('symbol',symbol))
+        #key = "{}/{}/PDF/{}".format(base_path, subfolder, filename)
 
-        # Use the filename to query the DigitizationIndex
-        try:
+        print(encoded_filename)
+        save_file = "{}/{}".format(tmpdir,filename)
+
+        if args.skipdb:
+            key = f"{base_path}/{subfolder}/{filename}"
+            
+        
+        else:
+            table = dynamodb.Table(args.table)
+            # Use the filename to query the DigitizationIndex
             response = table.query(
                 IndexName=args.index,
                 KeyConditionExpression=Key('filename').eq(filename)
             )
-
+            #print(response)
             key = ''
             for i in response['Items']:
                 this_k = i['Key']
+                #print(this_k)
                 if "/PDF/" in this_k:
                     key = this_k
                     print("Found key: {}".format(key))
-        except:
-            # Try to construct a key from what other data we have
-            key = f"dgacm_bak/{subfolder}/PDF/{filename}"
 
-        save_file = ''
+            if key == '':
+                print(f"KeyError: {filename} for {symbol} did not match anything in {args.table}.")
+                continue
+
         try:
-            save_file = "{}/{}".format(tmpdir,filename)
-            print(key)
             s3_client.download_file(args.bucket, key, save_file)
             print(save_file)
         except:
-            print(f"Unable to find anything matching {filename} or {symbol} in {args.bucket} or {table}")
+            print("NotFoundError: Unable to download file.")
 
         try:
             print("Importing {}".format(encoded_filename))
@@ -125,7 +116,13 @@ with open(args.filename) as csvfile:
             )
             print("Imported {}".format(imported))
         except FileExists:
-            print(f"DuplicateFileWarning: File {encoded_filename} already exists in the database. Continuing.")
+            print("File already exists in the database. Continuing.")
             pass
-        except Exception as e:
-            print(f"UncaughtError: {e}")
+        except FileNotFoundError:
+            print(f"Error: {save_file} could not be found.")
+            pass
+        except:
+            raise
+        
+
+        #print(filename, subfolder, symbol, lang)
