@@ -27,7 +27,7 @@ A cat and gawk chain that approaches this:
 cat june2020.tsv |cut -d$'\t' -f1 |awk -F'\.pdf' '{print $1}' \
     |gawk '{print gensub(/-([ACEFRS]$)/, "\t\\1", "g", $1 );}' \
     |gawk '{print gensub(/^([AES])-/, "\\1/", "g", $1 "\t" $2);}' \
-    |gawk '{print gensub(/[-|/](ADD|CORR|SC|SR|L|AC|W|REV|SUB|CN|C|WG|CRP)-/, "/\\1.", "g", $1 "\t" $2);}' \
+    |gawk '{print gensub(/[-|/](ADD|CORR|SC|SR|L|AC|W|REV|SUB|CN|C|WG|CRP|Add|Corr)-/, "/\\1.", "g", $1 "\t" $2);}' \
     |gawk '{print gensub(/-/, "/", "g", $1 "\t" $2);}' 
 
 These steps are reproduced below.
@@ -38,7 +38,7 @@ def parse_symbol(input_string):
     sym_lang = input_string.split('.')[0]
     sym = re.sub("-[ACEFRS]$", "", sym_lang)
     built_sym_1 = re.sub("^([AES])-", "\\1/", sym)
-    built_sym_2 = re.sub("[-|/](ADD|CORR|SC|SR|L|AC|W|REV|SUB|CN|C|WG|CRP)-", "/\\1.", built_sym_1)
+    built_sym_2 = re.sub("[-|/](ADD|CORR|SC|SR|L|AC|W|REV|SUB|CN|C|WG|CRP|Add|Corr)-", "/\\1.", built_sym_1)
     built_sym_3 = re.sub("-", "/", built_sym_2)
     return built_sym_3
 
